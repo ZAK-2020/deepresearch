@@ -40,6 +40,7 @@ export function createApp({
         "http://localhost:5173",
         `http://127.0.0.1:${env.PORT || 3001}`,
         `http://localhost:${env.PORT || 3001}`,
+        "https://deepresearchbackend-production.up.railway.app",
       ].includes(origin)
     )
       return res.status(403).json({ error: "Origin not allowed." });

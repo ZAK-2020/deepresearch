@@ -52,6 +52,7 @@ test('validation rejects malformed, oversized, missing-key and cross-origin runs
   assert.equal((await request('/api/research', { question: DEMO_QUESTION, mode: 'invalid' })).status, 400);
   assert.equal((await request('/api/research', { question: DEMO_QUESTION, mode: 'live' })).status, 503);
   assert.equal((await request('/api/research', { question: DEMO_QUESTION, mode: 'demo' }, { Origin: 'https://untrusted.example' })).status, 403);
+  assert.equal((await request('/api/research', { question: 'tiny', mode: 'demo' }, { Origin: 'https://deepresearchbackend-production.up.railway.app' })).status, 400);
   assert.equal((await request('/api/research/missing')).status, 404);
   assert.equal((await request('/api/health')).data.liveConfigured, false);
 });
