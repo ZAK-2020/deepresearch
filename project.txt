@@ -1,0 +1,171 @@
+# AI Deep Research Agent  
+### Project Overview
+
+## 1. Project Objective
+
+The goal of this project is to build an **AI-powered Deep Research Agent** that can automatically research a topic, collect information from multiple sources, analyze the findings, verify important claims, and generate a structured research report with references.
+
+The application will demonstrate the practical use of **LangChain, LangGraph, and LangSmith** with a modern **React.js frontend** and **Node.js/JavaScript backend**.
+
+---
+
+## 2. How the System Works
+
+The user enters a research question, for example:
+
+**“Compare the current electric vehicle market strategies of Tesla, BYD, and Volkswagen.”**
+
+The system will then:
+
+1. Understand the research question.
+2. Create a research plan.
+3. Search the web for relevant information.
+4. Analyze uploaded documents if provided.
+5. Collect findings from multiple sources.
+6. Verify important claims.
+7. Generate a structured final report.
+8. Provide source references.
+9. Track agent activity and performance through LangSmith.
+
+---
+
+## 3. AI Workflow
+
+```text
+User Research Question
+        ↓
+Research Planner
+        ↓
+Web Research Agent
+        ↓
+Document Research Agent
+        ↓
+Information Analysis
+        ↓
+Fact Checking
+        ↓
+Report Generation
+        ↓
+Final Research Report
+```
+
+**LangGraph** will control the complete workflow and maintain the state between different AI agents.
+
+---
+
+## 4. Main Features
+
+- AI research planning
+- Multi-step agent workflow
+- Web search integration
+- Document upload and analysis
+- Retrieval-Augmented Generation (RAG)
+- Source citations
+- Fact-checking workflow
+- Research history
+- Real-time research progress
+- LangSmith tracing and evaluation
+- Exportable research reports
+- Responsive modern user interface
+- Reusable UI components
+- Dark and light theme support
+
+---
+
+## 5. Technology Stack
+
+### Frontend
+
+- React.js
+- JavaScript
+- Vite
+- Tailwind CSS
+- shadcn/ui
+- Lucide React
+- React Router
+- Axios / Fetch API
+
+### Backend
+
+- Node.js
+- JavaScript
+- Express.js
+
+### AI
+
+- LangChain JS
+- LangGraph JS
+- LangSmith
+- OpenAI API
+
+### Data
+
+- PostgreSQL
+- pgvector
+
+### Search
+
+- Tavily Web Search API
+
+### Deployment
+
+- Docker
+- GitHub
+- Vercel / Netlify for frontend
+- Railway / Render for backend
+
+---
+
+## 6. Frontend Architecture
+
+The frontend will be developed using **React.js with Vite**.
+
+**Tailwind CSS** will be used for styling, while **shadcn/ui** will provide reusable and professional interface components.
+
+The frontend may contain the following screens and components:
+
+- Research Dashboard
+- New Research Page
+- Research Question Input
+- Research Progress Timeline
+- Agent Activity Status
+- Document Upload
+- Research History
+- Final Report Viewer
+- Source Reference Panel
+- Settings Page
+- Export Report Option
+- Light/Dark Mode
+
+**Lucide React** will be used for icons, and **React Router** will manage navigation between application pages.
+
+---
+
+## 7. Example User Journey
+
+The user enters:
+
+**“Research the impact of Generative AI on software development.”**
+
+The AI system creates a research plan, searches relevant sources, collects and compares information, verifies key findings, and produces a report containing:
+
+- Executive summary
+- Key findings
+- Market or industry observations
+- Comparison of viewpoints
+- Important statistics
+- Risks and opportunities
+- Conclusion
+- Source references
+
+The user can monitor the research process in real time and view the activity of different AI agents.
+
+---
+
+## 8. Project Goal
+
+The project is intended to demonstrate practical skills in:
+
+**React.js + JavaScript + Vite + Tailwind CSS + shadcn/ui + Node.js + Express.js + Generative AI + AI Agents + RAG + LangChain + LangGraph + LangSmith + PostgreSQL + pgvector + API Development + Docker**
+
+The final application will be a **portfolio-ready AI project** suitable for demonstrating modern AI application development skills on a CV and GitHub profile.

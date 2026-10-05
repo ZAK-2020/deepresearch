@@ -1,0 +1,27 @@
+{
+  "name": "deepresearch",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "db:setup": "node scripts/setup-db.js",
+    "db:up": "docker compose up -d --wait",
+    "db:stop": "docker compose stop",
+    "dev": "concurrently -k -n api,web -c cyan,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w frontend",
+    "start": "npm run start -w backend",
+    "test": "npm run test -w backend",
+    "check": "npm run test && npm run build",
+    "test:db": "npm run test:db -w backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module"
+}

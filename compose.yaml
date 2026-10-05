@@ -1,0 +1,20 @@
+name: deepresearch
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: deepresearch
+      POSTGRES_USER: deepresearch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run npm run db:setup first}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepresearch -d deepresearch"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+volumes:
+  postgres_data:
