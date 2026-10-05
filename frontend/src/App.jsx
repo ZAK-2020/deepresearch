@@ -204,7 +204,6 @@ export default function App() {
             </div>
             <span className="online-dot" />
           </div>
-          {health.authEnabled && <button className="theme-button" onClick={logout}>Log out</button>}
         </div>
       </aside>
       <div className="main-shell">
@@ -214,7 +213,7 @@ export default function App() {
             <ChevronRight size={14} />
             <span>Deep Research</span>
           </div>
-          <Badge tone={health?.offline ? "red" : "neutral"}>
+          <div className="topbar-actions"><Badge tone={health?.offline ? "red" : "neutral"}>
             <span
               className={`status-dot ${health?.offline ? "offline" : ""}`}
             />
@@ -226,9 +225,13 @@ export default function App() {
                   ? "Live research ready"
                   : "Demo workspace"}
           </Badge>
+          {health.authEnabled && <button className="topbar-logout" type="button" onClick={logout}>Log out</button>}</div>
         </header>
         <main>
           <Routes>
+            {['/login', '/register', '/verify', '/forgot-password', '/reset-password'].map(path =>
+              <Route key={path} path={path} element={<div className="page"><h1>You are signed in as {user.username}</h1><p>Log out to create or access another account.</p><Button onClick={logout}>Log out</Button></div>} />
+            )}
             <Route path="/" element={<Dashboard health={health} user={user} />} />
             <Route path="/research/:id" element={<Research />} />
             <Route path="/history" element={<HistoryPage />} />
