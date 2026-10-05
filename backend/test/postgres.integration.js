@@ -19,7 +19,7 @@ test('PostgreSQL retains completed research across API restarts and recovers int
   }
   async function start() {
     store = await postgresStore(url.href);
-    listener = createApp({ store, env: {}, demoDelay: 0 }).listen(0, '127.0.0.1');
+    listener = createApp({ store: { ...store, auth: undefined }, env: {}, demoDelay: 0 }).listen(0, '127.0.0.1');
     await new Promise(resolve => listener.on('listening', resolve));
     return `http://127.0.0.1:${listener.address().port}`;
   }

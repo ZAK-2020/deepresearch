@@ -7,6 +7,7 @@ import { memoryStore } from "./store.js";
 import { documentRouter, createEmbeddings, withDocumentRetrieval } from './documents.js';
 import { EMBEDDING_MODEL } from './document-store.js';
 import { verificationAppendix } from './verification.js';
+import { authRouter, sessionToken } from './auth.js';
 
 const inputSchema = z.object({
   question: z.string().trim().min(10).max(2000),
@@ -22,13 +23,13 @@ export function createApp({
   store = memoryStore(),
   embeddings,
   extract,
+  sendMail,
 } = {}) {
   const app = express();
   let activeRuns = 0;
   const configured = Boolean(env.OPENAI_API_KEY && env.TAVILY_API_KEY);
   app.disable("x-powered-by");
   app.use(express.json({ limit: "16kb" }));
-  // This initial milestone is a local, single-user application.
   // Reject cross-origin mutations, including requests to localhost from other sites.
   app.use("/api", (req, res, next) => {
     const origin = req.get("origin");
@@ -51,6 +52,7 @@ export function createApp({
     await store.health();
     res.json({
       status: "ok",
+      authEnabled: Boolean(store.auth),
       liveConfigured: configured,
       model: env.OPENAI_MODEL || "gpt-4.1-mini",
       tracing:
@@ -61,16 +63,28 @@ export function createApp({
       demoQuestion: DEMO_QUESTION,
     });
   });
+  if (store.auth) {
+    app.use('/api/auth', authRouter({ auth: store.auth, env, sendMail }));
+    app.use('/api', async (req, res, next) => {
+      try {
+        const user = await store.auth.sessionUser(sessionToken(req));
+        if (!user) return res.status(401).json({ error: 'Login required.' });
+        req.user = user;
+        req.dataStore = store.forUser(user.id);
+        next();
+      } catch (error) { next(error); }
+    });
+  } else app.use('/api', (req, res, next) => { req.dataStore = store; next(); });
   app.use('/api/documents', documentRouter({ store, env, embeddings, extract }));
-  app.get("/api/research", async (req, res) => res.json(await store.list()));
+  app.get("/api/research", async (req, res) => res.json(await req.dataStore.list()));
   app.get('/api/research/:id/export', async (req, res) => {
-    const run = await store.get(req.params.id);
+    const run = await req.dataStore.get(req.params.id);
     if (!run?.report) return res.status(404).json({error:'Report not found.'});
     if (run.status === 'running') return res.status(409).json({error:'Wait for the evidence check to finish before exporting.'});
     res.type('text/markdown').send(run.report + (run.verification ? verificationAppendix(run.verification) : '\n\nEvidence check: not available for this report.'));
   });
   app.get("/api/research/:id", async (req, res) => {
-    const run = await store.get(req.params.id);
+    const run = await req.dataStore.get(req.params.id);
     return run
       ? res.json(run)
       : res.status(404).json({ error: "Research not found." });
@@ -85,6 +99,7 @@ export function createApp({
             "Enter a question of 10–2,000 characters and a valid research mode and depth.",
         });
     const { question, depth, mode, includeWeb } = parsed.data;
+    if (req.user?.demo && mode !== 'demo') return res.status(403).json({ error: 'The demo account can only run sample research.' });
     const documentIds = [...new Set(parsed.data.documentIds)];
     if (mode === 'demo' && (documentIds.length || !includeWeb)) return res.status(400).json({ error: 'Document research requires live mode. Demo uses fixed sample sources.' });
     if (!includeWeb && !documentIds.length) return res.status(400).json({ error: 'Select at least one document or enable web search.' });
@@ -96,8 +111,8 @@ export function createApp({
             "Configure OpenAI for live research and Tavily when web search is enabled, then restart the API.",
         });
     if (documentIds.length) {
-      if (!store.getDocument) return res.status(503).json({ error: 'Document research requires PostgreSQL.' });
-      const documents = await Promise.all(documentIds.map(id => store.getDocument(id)));
+      if (!req.dataStore.getDocument) return res.status(503).json({ error: 'Document research requires PostgreSQL.' });
+      const documents = await Promise.all(documentIds.map(id => req.dataStore.getDocument(id)));
       if (documents.some(doc => !doc || doc.status !== 'ready' || doc.embeddingModel !== EMBEDDING_MODEL)) return res.status(400).json({ error: 'Every selected document must finish indexing before research starts.' });
     }
     if (activeRuns >= 2)
@@ -122,7 +137,7 @@ export function createApp({
       report: "",
     };
     try {
-      await store.save(run);
+      await req.dataStore.save(run);
     } catch {
       activeRuns--;
       return res
@@ -140,13 +155,13 @@ export function createApp({
           : mode === "demo"
             ? demoProvider(demoDelay)
             : liveProvider(env);
-        if (documentIds.length) provider = withDocumentRetrieval(provider, store, embeddings || createEmbeddings(env));
+        if (documentIds.length) provider = withDocumentRetrieval(provider, req.dataStore, embeddings || createEmbeddings(env));
         const graph = createResearchGraph(
           provider,
           async (id, status, result) => {
             run.steps.find((step) => step.id === id).status = status;
             if (result) Object.assign(run, result);
-            await store.save(run);
+            await req.dataStore.save(run);
           },
           run.steps.map(step => step.id),
         );
@@ -172,7 +187,7 @@ export function createApp({
       } finally {
         run.finishedAt = new Date().toISOString();
         try {
-          await store.save(run);
+          await req.dataStore.save(run);
         } catch {
           console.error("Could not persist final research status.");
         }

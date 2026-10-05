@@ -7,7 +7,7 @@
     "dev": "node --watch --env-file-if-exists=.env src/index.js",
     "start": "node --env-file-if-exists=.env src/index.js",
     "test": "node --test",
-    "test:db": "node --env-file=.env --test test/postgres.integration.js"
+    "test:db": "node --env-file=.env --test test/postgres.integration.js test/auth.integration.js"
   },
   "dependencies": {
     "@langchain/core": "^1.0.0",
@@ -15,6 +15,7 @@
     "@langchain/openai": "^1.0.0",
     "express": "^5.1.0",
     "multer": "^2.4.0",
+    "nodemailer": "^10.0.15",
     "pdf-parse": "^2.4.5",
     "pg": "^8.23.0",
     "zod": "^4.1.0"

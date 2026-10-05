@@ -38,6 +38,7 @@ import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import DocumentLibrary, { ResearchSource } from '@/components/DocumentLibrary';
 import EvidenceCheck, { evidenceLabel } from '@/components/EvidenceCheck';
+import AuthScreen from './AuthScreen';
 
 const DEMO = "How can AI support a more effective research workflow?";
 const stepInfo = {
@@ -122,6 +123,15 @@ const date = (value) =>
 
 export default function App() {
   const health = useHealth();
+  const navigate = useNavigate();
+  const [user, setUser] = useState(undefined);
+  useEffect(() => {
+    if (!health) return;
+    if (!health.authEnabled) { setUser({ username: 'Local user', demo: false }); return; }
+    let active = true;
+    api('/auth/me').then(data => { if (active) setUser(data.user); }).catch(() => { if (active) setUser(null); });
+    return () => { active = false; };
+  }, [health]);
   const [theme, setTheme] = useState(
     () => localStorage.getItem("research-theme") || "light",
   );
@@ -129,6 +139,11 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("research-theme", theme);
   }, [theme]);
+  if (!health || user === undefined) return <div className="auth-page">Connecting to your workspace…</div>;
+  if (!user) return <AuthScreen onLogin={setUser}/>;
+  async function logout() {
+    try { await api('/auth/logout', { method: 'POST' }); } finally { setUser(null); navigate('/login'); }
+  }
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -183,12 +198,13 @@ export default function App() {
             {theme === "light" ? "Dark appearance" : "Light appearance"}
           </button>
           <div className="profile">
-            <span className="avatar">Y</span>
+            <span className="avatar">{user.username[0].toUpperCase()}</span>
             <div>
-              Your workspace<small>Personal · local session</small>
+              {user.username}<small>{user.demo ? 'Shared demo workspace' : 'Personal workspace'}</small>
             </div>
             <span className="online-dot" />
           </div>
+          {health.authEnabled && <button className="theme-button" onClick={logout}>Log out</button>}
         </div>
       </aside>
       <div className="main-shell">
@@ -213,7 +229,7 @@ export default function App() {
         </header>
         <main>
           <Routes>
-            <Route path="/" element={<Dashboard health={health} />} />
+            <Route path="/" element={<Dashboard health={health} user={user} />} />
             <Route path="/research/:id" element={<Research />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route
@@ -239,7 +255,7 @@ export default function App() {
   );
 }
 
-function Dashboard({ health }) {
+function Dashboard({ health, user }) {
   const navigate = useNavigate();
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState("demo");
@@ -361,7 +377,7 @@ function Dashboard({ health }) {
                 onChange={(e) => setMode(e.target.value)}
               >
                 <option value="demo">Demo mode</option>
-                <option value="live">Live research</option>
+                <option value="live" disabled={user.demo}>Live research</option>
               </select>
             </label>
             <span className="control-divider" />

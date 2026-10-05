@@ -1,6 +1,6 @@
 # Deep Research
 
-A local AI research workspace built with React, JavaScript, Vite, Tailwind CSS, a shadcn-style Radix Button, Express, LangChain, and LangGraph.
+A multi-user AI research workspace built with React, JavaScript, Vite, Express, PostgreSQL, LangChain, and LangGraph.
 
 ## Run locally
 
@@ -13,17 +13,36 @@ npm run db:up
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. The API runs on **http://127.0.0.1:3001**. Demo mode works without credentials and runs a fixed, clearly labeled example. Typing a question does not change that sample; select Live research to research your own question.
+Open **http://127.0.0.1:5173**. The API runs on **http://127.0.0.1:3001**. With PostgreSQL running, use **Try the demo account** on the login page without an email address. The shared demo account can run only fixed sample research; it cannot use paid providers or upload documents.
+
+## Accounts and email
+
+Registration requires a username, a syntactically valid email address, and matching passwords of at least 12 characters. A user must follow a verification link sent to that address before login. Password-reset links expire after 30 minutes and invalidate existing sessions. Verification links expire after 24 hours. Passwords are hashed with Node.js scrypt; session and email tokens are random, stored only as SHA-256 hashes, and expire. Sessions use HttpOnly, SameSite=Lax cookies and Secure cookies on Railway.
+
+Configure these backend variables for real registration and password reset:
+
+```text
+APP_URL=https://your-public-site.example
+SMTP_HOST=your-smtp-host
+SMTP_PORT=587
+SMTP_USER=your-smtp-user
+SMTP_PASSWORD=your-smtp-password
+SMTP_FROM=DeepResearch <verified-sender@example.com>
+```
+
+Use an SMTP provider's verified sender address and credentials; these values belong in Railway **backend Variables** or ignored `backend/.env`, never in frontend variables or Git. With no SMTP configuration, demo login works but registration and password reset return a setup error. For local email-link testing, set `APP_URL=http://localhost:5173` and use a test SMTP server. The app does not send verification or reset tokens in API responses or logs.
+
+Each verified user sees only their own research and uploaded documents. Data created before accounts existed has no owner and is retained in PostgreSQL but hidden from account workspaces; assign it deliberately if you need to migrate it. The demo account is intentionally shared, so its sample-run history is shared too. Registration is open; anyone who verifies an email can use your paid provider keys for live research. Set provider spending limits and add a per-user usage budget before inviting the public.
 
 ## PostgreSQL in Docker
 
 Start Docker Desktop before running `npm run db:up`. The Compose service runs PostgreSQL 17 with pgvector on **127.0.0.1:5433**. `npm run db:setup` generates a random database password in the ignored root `.env` and adds `DATABASE_URL` to `backend/.env`, preserving existing provider keys. These files contain credentials; keep them private.
 
-Research questions, progress, plans, sources, analysis, and reports are saved in the `research_runs` table. Uploaded document metadata is stored in `documents`; extracted passages and pgvector embeddings are in `document_chunks`. The database schema is created idempotently at API startup. Existing local history exported to the ignored `backend/data/history-import.json` is imported once per ID without overwriting newer records.
+Research questions, progress, plans, sources, analysis, and reports are saved in the `research_runs` table. Uploaded document metadata is stored in `documents`; extracted passages and pgvector embeddings are in `document_chunks`. Account tables hold users, expiring sessions, and one-time links. The database schema is created idempotently at API startup. Existing local history exported to the ignored `backend/data/history-import.json` is imported once per ID without overwriting newer records.
 
 The named volume `deepresearch_postgres_data` keeps the database across container restarts and recreation. Use `npm run db:stop` to stop it and `npm run db:up` to start it again. **Do not run `docker compose down -v` unless you intend to delete the database volume.** A Docker volume provides persistence, not an independent backup.
 
-Run `npm run test:db` to verify storage and restart recovery against a separate, temporary test database. This uses the local database administrator configured by Compose and never deletes workspace research. Offline tests use an in-memory store. With no `DATABASE_URL`, the app also supports temporary memory mode; with a configured but unavailable database, it fails startup instead of silently falling back to memory.
+Run `npm run test:db` to verify storage, account isolation, and restart recovery against separate temporary test databases. This uses the local database administrator configured by Compose and never deletes workspace research. Offline tests use an in-memory store. With no `DATABASE_URL`, local development supports temporary memory mode without accounts. In production, `DATABASE_URL` is required and the API fails startup if it is absent.
 
 ## Enable live research
 
@@ -40,6 +59,7 @@ For optional LangSmith tracing, set `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY
 ## What works
 
 - Responsive dashboard, suggested questions, light/dark appearance on desktop, and client-side navigation.
+- Registration, email verification, login, logout, password reset, private workspaces, and a shared sample-only demo account.
 - Demo and live research modes; demo is explicit and never presented as researched evidence.
 - LangGraph workflow: plan → search → analyze → review → write.
 - Progress polling while each stage runs, research focus and queries, source links, Markdown report viewing and export.
@@ -82,7 +102,9 @@ Text is split into approximately 1,800-character passages with 200-character ove
 frontend/src/App.jsx             Screens and research interactions
 frontend/src/styles.css          Responsive design and themes
 frontend/src/components/ui/      Reusable UI components
-backend/src/app.js              API and session storage
+backend/src/app.js              API and access control
+backend/src/auth.js             Account endpoints and SMTP messages
+backend/src/auth-store.js       Password hashes, users, sessions, and email tokens
 backend/src/store.js            PostgreSQL storage and restart recovery
 compose.yaml                    PostgreSQL + pgvector and persistent volume
 backend/src/graph.js            LangGraph state and stages
@@ -109,6 +131,10 @@ After building, `npm start` serves the API and frontend at http://127.0.0.1:3001
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/health` | Public configuration flags; no API keys |
+| `POST /api/auth/register`, `POST /api/auth/verify` | Create an account and verify its email |
+| `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` | Session management |
+| `POST /api/auth/forgot-password`, `POST /api/auth/reset-password` | Email password reset |
+| `POST /api/auth/demo` | Open the shared sample-only demo account |
 | `POST /api/research` | Start a run with `{ question, mode: "demo" or "live", depth: "quick" or "deep", includeWeb: true, documentIds: [] }` |
 | `GET /api/research` | Saved research history |
 | `GET /api/research/:id` | Progress, plan, source excerpts, and report |
@@ -119,9 +145,9 @@ After building, `npm start` serves the API and frontend at http://127.0.0.1:3001
 
 ## Current boundaries and next milestones
 
-This is a **single-user local application**, not a public hosted service. Run one API process per database. It listens on loopback by default, has no authentication, and allows two active runs. PostgreSQL history persists across restarts; memory-mode history does not. Interrupted runs cannot resume and are marked failed on the next startup, keeping their completed stages. Avoid restarting the development server during a run. History is currently returned as a full list; server-side pagination remains future work.
+Run one API process per database. It listens on loopback by default for local development and allows two active runs. PostgreSQL history persists across restarts; memory-mode history does not. Interrupted runs cannot resume and are marked failed on the next startup, keeping their completed stages. Avoid restarting the development server during a run. History is currently returned as a full list; server-side pagination remains future work.
 
-Next: background execution and cancellation; broader independent verification and full-page evidence retrieval; LangSmith evaluations; authentication and per-user quotas before deployment; application containerization and deployment configuration.
+Next: per-user and project-wide API usage budgets; background execution and cancellation; broader independent verification and full-page evidence retrieval; LangSmith evaluations. In-memory login throttling is per process and should be replaced with a shared limiter before scaling the API to multiple replicas.
 
 ## Integration references
 

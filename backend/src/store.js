@@ -1,6 +1,7 @@
 import pg from "pg";
 import { readFile } from "node:fs/promises";
 import { initializeDocuments, documentStore } from './document-store.js';
+import { initializeAuth, authStore } from './auth-store.js';
 
 const summary = ({ report, analysis, review, ...run }) => run;
 export function memoryStore() {
@@ -39,9 +40,13 @@ export async function postgresStore(
         id uuid PRIMARY KEY,
         created_at timestamptz NOT NULL,
         updated_at timestamptz NOT NULL DEFAULT now(),
-        data jsonb NOT NULL
+        data jsonb NOT NULL,
+        user_id uuid
       );
-      CREATE INDEX IF NOT EXISTS research_runs_created_at_idx ON research_runs (created_at DESC);`);
+      ALTER TABLE research_runs ADD COLUMN IF NOT EXISTS user_id uuid;
+      CREATE INDEX IF NOT EXISTS research_runs_created_at_idx ON research_runs (created_at DESC);
+      CREATE INDEX IF NOT EXISTS research_runs_user_created_idx ON research_runs (user_id, created_at DESC);`);
+    await initializeAuth(pool);
     await initializeDocuments(pool, recover);
     if (importFile) {
       let previous = [];
@@ -64,8 +69,26 @@ export async function postgresStore(
       'steps', (SELECT jsonb_agg(CASE WHEN step->>'status' = 'running' THEN step || '{"status":"failed"}'::jsonb ELSE step END)
         FROM jsonb_array_elements(data->'steps') step)), updated_at = now()
       WHERE data->>'status' = 'running'`);
+    const scoped = (userId) => ({
+      ...documentStore(pool, userId),
+      async save(run) {
+        await pool.query(
+          "INSERT INTO research_runs (id, created_at, data, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now() WHERE research_runs.user_id IS NOT DISTINCT FROM EXCLUDED.user_id",
+          [run.id, run.createdAt, run, userId],
+        );
+      },
+      async get(id) {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return undefined;
+        return (await pool.query('SELECT data FROM research_runs WHERE id = $1 AND user_id = $2', [id, userId])).rows[0]?.data;
+      },
+      async list() {
+        return (await pool.query("SELECT data - 'report' - 'analysis' - 'review' AS data FROM research_runs WHERE user_id = $1 ORDER BY created_at DESC", [userId])).rows.map(row => row.data);
+      },
+    });
     return {
       kind: "postgresql",
+      auth: authStore(pool),
+      forUser: scoped,
       ...documentStore(pool),
       async save(run) {
         await pool.query(

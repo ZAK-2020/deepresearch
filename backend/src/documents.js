@@ -69,15 +69,16 @@ export function documentRouter({ store, env, embeddings, extract = extractDocume
   let processing = false;
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1, fields: 0, parts: 1 } }).single('file');
   router.use((req, res, next) => {
+    if (req.user?.demo) return res.status(403).json({ error: 'Document uploads are unavailable in the demo account.' });
     if (!store.listDocuments) return res.status(503).json({ error: 'Document storage requires PostgreSQL. Start the database and restart the API.' });
     next();
   });
-  router.get('/', async (req, res) => res.json(await store.listDocuments()));
+  router.get('/', async (req, res) => res.json(await req.dataStore.listDocuments()));
   router.get('/:id/passages', async (req, res) => {
     if (!z.uuid().safeParse(req.params.id).success) return res.status(404).json({ error: 'Document not found.' });
-    const doc = await store.getDocument(req.params.id);
+    const doc = await req.dataStore.getDocument(req.params.id);
     if (!doc) return res.status(404).json({ error: 'Document not found.' });
-    res.json({ document: doc, passages: await store.documentPassages(doc.id) });
+    res.json({ document: doc, passages: await req.dataStore.documentPassages(doc.id) });
   });
   router.post('/', (req, res, next) => {
     if (!env.OPENAI_API_KEY) return res.status(503).json({ error: 'Configure OPENAI_API_KEY to index documents.' });
@@ -92,20 +93,20 @@ export function documentRouter({ store, env, embeddings, extract = extractDocume
           const extension = extname(req.file.originalname).toLowerCase();
           if (!['.pdf', '.txt', '.md'].includes(extension)) throw new DocumentError('Supported formats: PDF, TXT, and Markdown (.md).', 415);
           const hash = createHash('sha256').update(req.file.buffer).digest('hex');
-          const existing = await store.findDocument(hash);
+          const existing = await req.dataStore.findDocument(hash);
           if (existing) { res.status(200).json(existing); return; }
           document = { id: randomUUID(), name: req.file.originalname.split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g, '').slice(0, 180), bytes: req.file.size, status: 'processing', createdAt: new Date().toISOString(), hash, embeddingModel: EMBEDDING_MODEL, chunkCount: 0 };
-          await store.saveDocument(document);
+          await req.dataStore.saveDocument(document);
           res.status(202).json(document);
           const pages = await extract(req.file);
           const chunks = chunkPages(pages);
           const vectors = await (embeddings || createEmbeddings(env)).embedDocuments(chunks.map(c => c.content));
           const ready = { ...document, status: 'ready', chunkCount: chunks.length, pageCount: extension === '.pdf' ? pages.length : null, finishedAt: new Date().toISOString() };
-          await store.completeDocument(ready, chunks, vectors);
+          await req.dataStore.completeDocument(ready, chunks, vectors);
         } catch (error) {
           const message = error instanceof DocumentError ? error.message : 'Document indexing failed. Check the OpenAI key, quota, and database, then upload again.';
           if (document) {
-            try { await store.saveDocument({ ...document, status: 'failed', error: message, finishedAt: new Date().toISOString() }); } catch { console.error('Could not save document failure status.'); }
+            try { await req.dataStore.saveDocument({ ...document, status: 'failed', error: message, finishedAt: new Date().toISOString() }); } catch { console.error('Could not save document failure status.'); }
           }
           if (!res.headersSent) res.status(error instanceof DocumentError ? error.status : 503).json({ error: message });
         } finally { processing = false; }

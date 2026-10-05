@@ -3,6 +3,10 @@ import express from "express";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { postgresStore, memoryStore } from "./store.js";
+if ((process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV === 'production') && !process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is required when running in production.');
+  process.exit(1);
+}
 let store;
 try {
   store = process.env.DATABASE_URL
