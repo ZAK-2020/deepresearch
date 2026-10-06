@@ -18,6 +18,11 @@ test('Brevo sends verification links over HTTPS without exposing the API key', a
   assert.match(message.textContent, /https:\/\/research.example\/verify\?token=one-time-token/);
   const rejected = createMailer({ APP_URL: 'https://research.example', BREVO_API_KEY: 'bad-key', BREVO_SENDER_EMAIL: 'owner@gmail.com' }, async () => ({ ok: false, status: 401 }));
   await assert.rejects(rejected('reader@example.com', 'Verify your DeepResearch account', '/verify', 'token'), error => error.provider === 'Brevo' && error.status === 401);
+  const forbidden = createMailer({ APP_URL: 'https://research.example', BREVO_API_KEY: 'test-secret', BREVO_SENDER_EMAIL: 'owner@gmail.com' }, async () => ({
+    ok: false, status: 403, json: async () => ({ code: 'unauthorized', message: 'Sending disabled for owner@gmail.com using xkeysib-secret' }),
+  }));
+  await assert.rejects(forbidden('reader@example.com', 'Verify your DeepResearch account', '/verify', 'token'), error =>
+    error.detail === 'unauthorized: Sending disabled for [redacted email] using [redacted key]');
 });
 
 test('password hashes are salted and verify only the matching password', async () => {

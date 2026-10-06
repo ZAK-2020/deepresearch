@@ -18,7 +18,19 @@ const cookie = (value, env) => `${cookieName}=${value}; Path=/; HttpOnly; SameSi
 const clearCookie = env => `${cookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure(env) ? '; Secure' : ''}`;
 export const sessionToken = req => req.get('cookie')?.split(';').map(part => part.trim()).find(part => part.startsWith(cookieName + '='))?.slice(cookieName.length + 1);
 class MailDeliveryError extends Error {
-  constructor(provider, status) { super('Email provider rejected the message.'); this.provider = provider; this.status = status; }
+  constructor(provider, status, detail = '') { super('Email provider rejected the message.'); this.provider = provider; this.status = status; this.detail = detail; }
+}
+async function brevoErrorDetail(response) {
+  try {
+    const body = await response.json();
+    const code = typeof body?.code === 'string' && /^[a-z0-9_-]{1,64}$/i.test(body.code) ? body.code : '';
+    const message = typeof body?.message === 'string' ? body.message
+      .replace(/x(?:key|smtp)sib-[^\s"']+/gi, '[redacted key]')
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted email]')
+      .replace(/https?:\/\/\S+/gi, '[redacted URL]')
+      .slice(0, 240) : '';
+    return [code, message].filter(Boolean).join(': ');
+  } catch { return ''; }
 }
 function emailFailure(error) {
   if (error.provider === 'Brevo') return `Brevo rejected the email (HTTP ${error.status}). Check the API key, verified sender, and transactional email activation.`;
@@ -39,7 +51,7 @@ export function createMailer(env, fetcher = fetch) {
         textContent: `Open this link to ${subject.toLowerCase()}: ${url.href}\n\nIf you did not request this, ignore this message.` }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!response.ok) throw new MailDeliveryError('Brevo', response.status);
+    if (!response.ok) throw new MailDeliveryError('Brevo', response.status, await brevoErrorDetail(response));
   };
   if (env.RESEND_API_KEY && env.RESEND_FROM) return async (to, subject, path, value) => {
     const url = new URL(path, env.APP_URL);
@@ -95,7 +107,7 @@ export function authRouter({ auth, env, sendMail = createMailer(env) }) {
       const value = await auth.issueToken(user.id, 'verify', 60 * 24);
       await sendMail(user.email, 'Verify your DeepResearch account', '/verify', value);
     } catch (error) {
-      console.error('Verification email failed:', error.provider || error.name, error.status || '');
+      console.error('Verification email failed:', error.provider || error.name, error.status || '', error.detail || '');
       await auth.deleteUnverifiedUser(user.id);
       return res.status(503).json({ error: emailFailure(error) });
     }
@@ -141,7 +153,7 @@ export function authRouter({ auth, env, sendMail = createMailer(env) }) {
         const value = await auth.issueToken(user.id, 'reset', 30);
         await sendMail(user.email, 'Reset your DeepResearch password', '/reset-password', value);
       } catch (error) {
-        console.error('Password reset email failed:', error.provider || error.name, error.status || '');
+        console.error('Password reset email failed:', error.provider || error.name, error.status || '', error.detail || '');
         return res.status(503).json({ error: 'Email could not be sent. Please try again later.' });
       }
     }
