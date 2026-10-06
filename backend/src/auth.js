@@ -17,6 +17,14 @@ const secure = env => env.NODE_ENV === 'production' || Boolean(env.RAILWAY_ENVIR
 const cookie = (value, env) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure(env) ? '; Secure' : ''}`;
 const clearCookie = env => `${cookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure(env) ? '; Secure' : ''}`;
 export const sessionToken = req => req.get('cookie')?.split(';').map(part => part.trim()).find(part => part.startsWith(cookieName + '='))?.slice(cookieName.length + 1);
+class MailDeliveryError extends Error {
+  constructor(provider, status) { super('Email provider rejected the message.'); this.provider = provider; this.status = status; }
+}
+function emailFailure(error) {
+  if (error.provider === 'Brevo') return `Brevo rejected the email (HTTP ${error.status}). Check the API key, verified sender, and transactional email activation.`;
+  if (error.name === 'TimeoutError' || error.code === 'ETIMEDOUT') return 'Email connection timed out. Check the email provider configuration.';
+  return 'Verification email could not be sent. Please try again later.';
+}
 
 export function createMailer(env, fetcher = fetch) {
   if (!env.APP_URL) return null;
@@ -31,7 +39,7 @@ export function createMailer(env, fetcher = fetch) {
         textContent: `Open this link to ${subject.toLowerCase()}: ${url.href}\n\nIf you did not request this, ignore this message.` }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!response.ok) throw new Error('Email provider rejected the message.');
+    if (!response.ok) throw new MailDeliveryError('Brevo', response.status);
   };
   if (env.RESEND_API_KEY && env.RESEND_FROM) return async (to, subject, path, value) => {
     const url = new URL(path, env.APP_URL);
@@ -43,7 +51,7 @@ export function createMailer(env, fetcher = fetch) {
         text: `Open this link to ${subject.toLowerCase()}: ${url.href}\n\nIf you did not request this, ignore this message.` }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!response.ok) throw new Error('Email provider rejected the message.');
+    if (!response.ok) throw new MailDeliveryError('Resend', response.status);
   };
   if (!env.SMTP_HOST || !env.SMTP_FROM) return null;
   const transporter = nodemailer.createTransport({
@@ -86,9 +94,10 @@ export function authRouter({ auth, env, sendMail = createMailer(env) }) {
     try {
       const value = await auth.issueToken(user.id, 'verify', 60 * 24);
       await sendMail(user.email, 'Verify your DeepResearch account', '/verify', value);
-    } catch {
+    } catch (error) {
+      console.error('Verification email failed:', error.provider || error.name, error.status || '');
       await auth.deleteUnverifiedUser(user.id);
-      return res.status(503).json({ error: 'Verification email could not be sent. Please try again later.' });
+      return res.status(503).json({ error: emailFailure(error) });
     }
     res.status(201).json({ message: 'Check your email for a verification link before logging in.' });
   });
@@ -131,7 +140,10 @@ export function authRouter({ auth, env, sendMail = createMailer(env) }) {
       try {
         const value = await auth.issueToken(user.id, 'reset', 30);
         await sendMail(user.email, 'Reset your DeepResearch password', '/reset-password', value);
-      } catch { return res.status(503).json({ error: 'Email could not be sent. Please try again later.' }); }
+      } catch (error) {
+        console.error('Password reset email failed:', error.provider || error.name, error.status || '');
+        return res.status(503).json({ error: 'Email could not be sent. Please try again later.' });
+      }
     }
     res.json({ message: 'If that verified email is registered, a reset link has been sent.' });
   });
