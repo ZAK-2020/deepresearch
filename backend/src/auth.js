@@ -18,13 +18,42 @@ const cookie = (value, env) => `${cookieName}=${value}; Path=/; HttpOnly; SameSi
 const clearCookie = env => `${cookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure(env) ? '; Secure' : ''}`;
 export const sessionToken = req => req.get('cookie')?.split(';').map(part => part.trim()).find(part => part.startsWith(cookieName + '='))?.slice(cookieName.length + 1);
 
-function mailer(env) {
-  if (!env.SMTP_HOST || !env.SMTP_FROM || !env.APP_URL) return null;
+export function createMailer(env, fetcher = fetch) {
+  if (!env.APP_URL) return null;
+  if (env.BREVO_API_KEY && env.BREVO_SENDER_EMAIL) return async (to, subject, path, value) => {
+    const url = new URL(path, env.APP_URL);
+    url.searchParams.set('token', value);
+    const response = await fetcher('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ sender: { name: 'DeepResearch', email: env.BREVO_SENDER_EMAIL },
+        to: [{ email: to }], subject,
+        textContent: `Open this link to ${subject.toLowerCase()}: ${url.href}\n\nIf you did not request this, ignore this message.` }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) throw new Error('Email provider rejected the message.');
+  };
+  if (env.RESEND_API_KEY && env.RESEND_FROM) return async (to, subject, path, value) => {
+    const url = new URL(path, env.APP_URL);
+    url.searchParams.set('token', value);
+    const response = await fetcher('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: env.RESEND_FROM, to: [to], subject,
+        text: `Open this link to ${subject.toLowerCase()}: ${url.href}\n\nIf you did not request this, ignore this message.` }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) throw new Error('Email provider rejected the message.');
+  };
+  if (!env.SMTP_HOST || !env.SMTP_FROM) return null;
   const transporter = nodemailer.createTransport({
     host: env.SMTP_HOST,
     port: Number(env.SMTP_PORT || 587),
     secure: Number(env.SMTP_PORT || 587) === 465,
     auth: env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASSWORD } : undefined,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
   return async (to, subject, path, value) => {
     const url = new URL(path, env.APP_URL);
@@ -35,7 +64,7 @@ function mailer(env) {
   };
 }
 
-export function authRouter({ auth, env, sendMail = mailer(env) }) {
+export function authRouter({ auth, env, sendMail = createMailer(env) }) {
   const router = Router();
   const attempts = new Map();
   router.use((req, res, next) => {

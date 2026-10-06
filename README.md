@@ -19,18 +19,15 @@ Open **http://127.0.0.1:5173**. The API runs on **http://127.0.0.1:3001**. With 
 
 Registration requires a username, a syntactically valid email address, and matching passwords of at least 12 characters. A user must follow a verification link sent to that address before login. Password-reset links expire after 30 minutes and invalidate existing sessions. Verification links expire after 24 hours. Passwords are hashed with Node.js scrypt; session and email tokens are random, stored only as SHA-256 hashes, and expire. Sessions use HttpOnly, SameSite=Lax cookies and Secure cookies on Railway.
 
-Configure these backend variables for real registration and password reset:
+On Railway Free, Trial, and Hobby, outbound SMTP is blocked. Configure Brevo's HTTPS transactional email API for real registration and password reset. Add and verify a sender address in Brevo, then set these backend variables:
 
 ```text
 APP_URL=https://your-public-site.example
-SMTP_HOST=your-smtp-host
-SMTP_PORT=587
-SMTP_USER=your-smtp-user
-SMTP_PASSWORD=your-smtp-password
-SMTP_FROM=DeepResearch <verified-sender@example.com>
+BREVO_API_KEY=your-brevo-api-key
+BREVO_SENDER_EMAIL=your-verified-sender@example.com
 ```
 
-Use an SMTP provider's verified sender address and credentials; these values belong in Railway **backend Variables** or ignored `backend/.env`, never in frontend variables or Git. With no SMTP configuration, demo login works but registration and password reset return a setup error. For local email-link testing, set `APP_URL=http://localhost:5173` and use a test SMTP server. The app does not send verification or reset tokens in API responses or logs.
+Brevo can verify a Gmail sender address, though it may replace the visible From address for deliverability. Resend's HTTPS API is also supported with `RESEND_API_KEY` and `RESEND_FROM`; sending to arbitrary users requires a verified domain. SMTP remains available locally or on Railway Pro and higher with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM`. Brevo takes precedence when configured, then Resend, then SMTP. Keep all credentials in Railway **backend Variables** or ignored `backend/.env`, never in frontend variables or Git. With no email provider configuration, demo login works but registration and password reset return a setup error. For local email-link testing, set `APP_URL=http://localhost:5173`. The app does not send verification or reset tokens in API responses or logs.
 
 Each verified user sees only their own research and uploaded documents. Data created before accounts existed has no owner and is retained in PostgreSQL but hidden from account workspaces; assign it deliberately if you need to migrate it. The demo account is intentionally shared, so its sample-run history is shared too. Registration is open; anyone who verifies an email can use your paid provider keys for live research. Set provider spending limits and add a per-user usage budget before inviting the public.
 
@@ -103,7 +100,7 @@ frontend/src/App.jsx             Screens and research interactions
 frontend/src/styles.css          Responsive design and themes
 frontend/src/components/ui/      Reusable UI components
 backend/src/app.js              API and access control
-backend/src/auth.js             Account endpoints and SMTP messages
+backend/src/auth.js             Account endpoints and email delivery
 backend/src/auth-store.js       Password hashes, users, sessions, and email tokens
 backend/src/store.js            PostgreSQL storage and restart recovery
 compose.yaml                    PostgreSQL + pgvector and persistent volume

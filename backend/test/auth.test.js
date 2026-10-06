@@ -2,6 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
 import { hashPassword, checkPassword } from '../src/auth-store.js';
+import { createMailer } from '../src/auth.js';
+
+test('Brevo sends verification links over HTTPS without exposing the API key', async () => {
+  const sent = [];
+  const send = createMailer({ APP_URL: 'https://research.example', BREVO_API_KEY: 'test-secret', BREVO_SENDER_EMAIL: 'owner@gmail.com', SMTP_HOST: 'smtp.gmail.com', SMTP_FROM: 'owner@gmail.com' }, async (url, options) => {
+    sent.push({ url, options });
+    return { ok: true };
+  });
+  await send('reader@example.com', 'Verify your DeepResearch account', '/verify', 'one-time-token');
+  assert.equal(sent[0].url, 'https://api.brevo.com/v3/smtp/email');
+  assert.equal(sent[0].options.headers['api-key'], 'test-secret');
+  const message = JSON.parse(sent[0].options.body);
+  assert.equal(message.to[0].email, 'reader@example.com');
+  assert.match(message.textContent, /https:\/\/research.example\/verify\?token=one-time-token/);
+});
 
 test('password hashes are salted and verify only the matching password', async () => {
   const first = await hashPassword('correct-horse-battery');
