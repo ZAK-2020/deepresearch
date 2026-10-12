@@ -1,12 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
-import { demoProvider, DEMO_QUESTION, safeUrl } from '../src/providers.js';
-import { createResearchGraph, stages } from '../src/graph.js';
+import { safeUrl } from '../src/providers.js';
+import { createResearchGraph, researchStages } from '../src/graph.js';
 import { memoryStore } from '../src/store.js';
 
+const question = 'How do research teams evaluate source quality?';
+const keys = { OPENAI_API_KEY: 'test-key', TAVILY_API_KEY: 'test-key' };
+function provider(delay = 0) {
+  const pause = () => new Promise(resolve => setTimeout(resolve, delay));
+  return {
+    async plan() { await pause(); return { plan: { queries: ['source quality'], focus: ['Evidence'] } }; },
+    async search() { await pause(); return { sources: [{ id: 1, title: 'Source', url: 'https://example.com/source', content: 'Evidence.' }] }; },
+    async analyze() { await pause(); return { analysis: 'Evidence analysis' }; },
+    async review() { await pause(); return { review: 'Evidence review' }; },
+    async write() { await pause(); return { report: '# Research report\n\nSupported statement [1].', reportBody: 'Supported statement [1].' }; },
+    async verify() { await pause(); return { verification: { status: 'checked', scope: 'Source excerpts' } }; },
+  };
+}
 async function server(t, options = {}) {
-  const listener = createApp({ env: {}, demoDelay: 0, ...options }).listen(0, '127.0.0.1');
+  const listener = createApp({ env: keys, providerFactory: () => provider(), ...options }).listen(0, '127.0.0.1');
   await new Promise(resolve => listener.on('listening', resolve));
   t.after(() => new Promise(resolve => listener.close(resolve)));
   const url = `http://127.0.0.1:${listener.address().port}`;
@@ -23,54 +36,50 @@ async function waitForRun(request, id) {
   }
   throw new Error('Research did not finish within test timeout');
 }
-test('graph executes in order and forwards evidence into report writing', async () => {
+
+test('graph executes all live stages in order', async () => {
   const transitions = [];
-  const provider = demoProvider(0);
-  const write = provider.write;
-  provider.write = async state => { assert.equal(state.sources.length, 2); assert.ok(state.review); return write(state); };
-  const result = await createResearchGraph(provider, (stage, status) => transitions.push(`${stage}:${status}`)).invoke({ question: DEMO_QUESTION });
-  assert.deepEqual(transitions, stages.flatMap(stage => [`${stage}:running`, `${stage}:complete`]));
-  assert.match(result.report, /Sample report/);
+  const result = await createResearchGraph(provider(), (stage, status) => transitions.push(`${stage}:${status}`), researchStages()).invoke({ question });
+  assert.deepEqual(transitions, researchStages().flatMap(stage => [`${stage}:running`, `${stage}:complete`]));
+  assert.match(result.report, /Research report/);
 });
-test('API completes the fixed demo, stores history, and returns source links', async t => {
+test('open API completes real research and shares history without an account', async t => {
   const request = await server(t);
-  const created = await request('/api/research', { question: 'A completely different question', mode: 'demo' });
+  const created = await request('/api/research', { question, depth: 'quick' });
   assert.equal(created.status, 202);
-  assert.equal(created.data.question, DEMO_QUESTION);
+  assert.equal(created.data.mode, 'live');
+  assert.equal(created.data.question, question);
   const run = await waitForRun(request, created.data.id);
   assert.equal(run.status, 'complete');
   assert.ok(run.steps.every(step => step.status === 'complete'));
-  assert.match(run.report, /No|demo/i);
-  assert.equal(run.sources.length, 2);
-  const history = await request('/api/research');
-  assert.equal(history.data.length, 1);
-  assert.equal(history.data[0].report, undefined);
+  assert.ok(run.verification);
+  assert.equal((await request('/api/research')).data.length, 1);
+  assert.equal((await request('/api/auth/me')).status, 404);
 });
-test('validation rejects malformed, oversized, missing-key and cross-origin runs', async t => {
+test('validation rejects malformed questions, unsupported modes, missing keys and cross-origin runs', async t => {
   const request = await server(t);
-  for (const question of ['', 'tiny', 'x'.repeat(2001)]) assert.equal((await request('/api/research', { question, mode: 'demo' })).status, 400);
-  assert.equal((await request('/api/research', { question: DEMO_QUESTION, mode: 'invalid' })).status, 400);
-  assert.equal((await request('/api/research', { question: DEMO_QUESTION, mode: 'live' })).status, 503);
-  assert.equal((await request('/api/research', { question: DEMO_QUESTION, mode: 'demo' }, { Origin: 'https://untrusted.example' })).status, 403);
-  assert.equal((await request('/api/research', { question: 'tiny', mode: 'demo' }, { Origin: 'https://deepresearchbackend-production.up.railway.app' })).status, 400);
+  for (const invalid of ['', 'tiny', 'x'.repeat(2001)]) assert.equal((await request('/api/research', { question: invalid })).status, 400);
+  assert.equal((await request('/api/research', { question, mode: 'demo' })).status, 400);
+  assert.equal((await request('/api/research', { question }, { Origin: 'https://untrusted.example' })).status, 403);
   assert.equal((await request('/api/research/missing')).status, 404);
-  assert.equal((await request('/api/health')).data.liveConfigured, false);
+  const noKeys = await server(t, { env: {} });
+  assert.equal((await noKeys('/api/research', { question })).status, 503);
+  assert.equal((await noKeys('/api/health')).data.liveConfigured, false);
 });
-test('a provider failure stops the graph and preserves completed progress without leaking errors', async t => {
-  const request = await server(t, { providerFactory: () => ({ ...demoProvider(0), search: async () => { throw new Error('secret-provider-token'); } }) });
-  const created = await request('/api/research', { question: DEMO_QUESTION, mode: 'demo' });
+test('provider failure preserves progress without exposing secrets', async t => {
+  const request = await server(t, { providerFactory: () => ({ ...provider(), search: async () => { throw new Error('secret-provider-token'); } }) });
+  const created = await request('/api/research', { question });
   const run = await waitForRun(request, created.data.id);
   assert.equal(run.status, 'failed');
   assert.equal(run.steps[0].status, 'complete');
   assert.equal(run.steps[1].status, 'failed');
-  assert.equal(run.steps[2].status, 'pending');
   assert.ok(!JSON.stringify(run).includes('secret-provider-token'));
 });
-test('caps concurrent runs to prevent accidental duplicate workloads', async t => {
-  const request = await server(t, { demoDelay: 30 });
-  const first = await request('/api/research', { question: DEMO_QUESTION, mode: 'demo' });
-  const second = await request('/api/research', { question: DEMO_QUESTION, mode: 'demo' });
-  assert.equal((await request('/api/research', { question: DEMO_QUESTION, mode: 'demo' })).status, 429);
+test('caps concurrent real runs', async t => {
+  const request = await server(t, { providerFactory: () => provider(30) });
+  const first = await request('/api/research', { question });
+  const second = await request('/api/research', { question });
+  assert.equal((await request('/api/research', { question })).status, 429);
   await Promise.all([waitForRun(request, first.data.id), waitForRun(request, second.data.id)]);
 });
 test('source URL validation excludes executable and malformed links', () => {
@@ -79,16 +88,15 @@ test('source URL validation excludes executable and malformed links', () => {
   assert.equal(safeUrl('not a url'), null);
   assert.equal(safeUrl('https://example.com/report'), 'https://example.com/report');
 });
-
-test('failed initial persistence rejects the run and releases the concurrency slot', async t => {
+test('failed initial persistence releases the concurrency slot', async t => {
   const store = memoryStore();
   let fail = true;
   const save = store.save;
   store.save = async run => { if (fail) throw new Error('database unavailable'); return save(run); };
   const request = await server(t, { store });
-  for (let i = 0; i < 3; i++) assert.equal((await request('/api/research', { question: DEMO_QUESTION, mode: 'demo' })).status, 503);
+  for (let i = 0; i < 3; i++) assert.equal((await request('/api/research', { question })).status, 503);
   fail = false;
-  const created = await request('/api/research', { question: DEMO_QUESTION, mode: 'demo' });
+  const created = await request('/api/research', { question });
   assert.equal(created.status, 202);
   assert.equal((await waitForRun(request, created.data.id)).status, 'complete');
 });

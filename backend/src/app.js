@@ -2,28 +2,24 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { createResearchGraph, researchStages } from "./graph.js";
-import { demoProvider, liveProvider, DEMO_QUESTION } from "./providers.js";
+import { liveProvider } from "./providers.js";
 import { memoryStore } from "./store.js";
 import { documentRouter, createEmbeddings, withDocumentRetrieval } from './documents.js';
 import { EMBEDDING_MODEL } from './document-store.js';
 import { verificationAppendix } from './verification.js';
-import { authRouter, sessionToken } from './auth.js';
 
-const inputSchema = z.object({
+const inputSchema = z.strictObject({
   question: z.string().trim().min(10).max(2000),
   depth: z.enum(["quick", "deep"]).default("quick"),
-  mode: z.enum(["demo", "live"]),
   documentIds: z.array(z.uuid()).max(5).default([]),
   includeWeb: z.boolean().default(true),
 });
 export function createApp({
   env = process.env,
   providerFactory,
-  demoDelay = 700,
   store = memoryStore(),
   embeddings,
   extract,
-  sendMail,
 } = {}) {
   const app = express();
   let activeRuns = 0;
@@ -52,7 +48,6 @@ export function createApp({
     await store.health();
     res.json({
       status: "ok",
-      authEnabled: Boolean(store.auth),
       liveConfigured: configured,
       model: env.OPENAI_MODEL || "gpt-4.1-mini",
       tracing:
@@ -60,21 +55,9 @@ export function createApp({
       storage: store.kind,
       documentsConfigured: Boolean(store.listDocuments && env.OPENAI_API_KEY),
       embeddingModel: EMBEDDING_MODEL,
-      demoQuestion: DEMO_QUESTION,
     });
   });
-  if (store.auth) {
-    app.use('/api/auth', authRouter({ auth: store.auth, env, sendMail }));
-    app.use('/api', async (req, res, next) => {
-      try {
-        const user = await store.auth.sessionUser(sessionToken(req));
-        if (!user) return res.status(401).json({ error: 'Login required.' });
-        req.user = user;
-        req.dataStore = store.forUser(user.id);
-        next();
-      } catch (error) { next(error); }
-    });
-  } else app.use('/api', (req, res, next) => { req.dataStore = store; next(); });
+  app.use('/api', (req, res, next) => { req.dataStore = store; next(); });
   app.use('/api/documents', documentRouter({ store, env, embeddings, extract }));
   app.get("/api/research", async (req, res) => res.json(await req.dataStore.list()));
   app.get('/api/research/:id/export', async (req, res) => {
@@ -96,14 +79,12 @@ export function createApp({
         .status(400)
         .json({
           error:
-            "Enter a question of 10–2,000 characters and a valid research mode and depth.",
+            "Enter a question of 10–2,000 characters and a valid research depth.",
         });
-    const { question, depth, mode, includeWeb } = parsed.data;
-    if (req.user?.demo && mode !== 'demo') return res.status(403).json({ error: 'The demo account can only run sample research.' });
+    const { question, depth, includeWeb } = parsed.data;
     const documentIds = [...new Set(parsed.data.documentIds)];
-    if (mode === 'demo' && (documentIds.length || !includeWeb)) return res.status(400).json({ error: 'Document research requires live mode. Demo uses fixed sample sources.' });
     if (!includeWeb && !documentIds.length) return res.status(400).json({ error: 'Select at least one document or enable web search.' });
-    if (mode === "live" && (!env.OPENAI_API_KEY || (includeWeb && !env.TAVILY_API_KEY)))
+    if (!env.OPENAI_API_KEY || (includeWeb && !env.TAVILY_API_KEY))
       return res
         .status(503)
         .json({
@@ -125,14 +106,14 @@ export function createApp({
     activeRuns++;
     const run = {
       id: randomUUID(),
-      question: mode === "demo" ? DEMO_QUESTION : question,
+      question,
       depth,
-      mode,
+      mode: "live",
       documentIds,
       includeWeb,
       status: "running",
       createdAt: new Date().toISOString(),
-      steps: researchStages({ documentIds, includeWeb, mode }).map((id) => ({ id, status: "pending" })),
+      steps: researchStages({ documentIds, includeWeb }).map((id) => ({ id, status: "pending" })),
       sources: [],
       report: "",
     };
@@ -150,11 +131,7 @@ export function createApp({
     res.status(202).json(run);
     void (async () => {
       try {
-        let provider = providerFactory
-          ? providerFactory(mode)
-          : mode === "demo"
-            ? demoProvider(demoDelay)
-            : liveProvider(env);
+        let provider = providerFactory ? providerFactory() : liveProvider(env);
         if (documentIds.length) provider = withDocumentRetrieval(provider, req.dataStore, embeddings || createEmbeddings(env));
         const graph = createResearchGraph(
           provider,
@@ -169,8 +146,7 @@ export function createApp({
           { question: run.question, depth, documentIds, includeWeb },
           {
             runName: "deep-research",
-            metadata: { researchId: run.id, mode },
-            ...(mode === "demo" ? { callbacks: [] } : {}),
+            metadata: { researchId: run.id, mode: "live" },
           },
         );
         run.status = "complete";
@@ -179,10 +155,7 @@ export function createApp({
         const active = run.steps.find((step) => step.status === "running");
         if (active) active.status = "failed";
         // Provider error bodies may include sensitive data; expose only safe guidance.
-        run.error =
-          mode === "live"
-            ? "Research could not finish. Check provider keys, model access, quotas, and connectivity, then try again."
-            : "The demo could not finish. Please try again.";
+        run.error = "Research could not finish. Check provider keys, model access, quotas, and connectivity, then try again.";
         console.error("Research failed:", error.name, error.status || "");
       } finally {
         run.finishedAt = new Date().toISOString();

@@ -69,7 +69,6 @@ export function documentRouter({ store, env, embeddings, extract = extractDocume
   let processing = false;
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1, fields: 0, parts: 1 } }).single('file');
   router.use((req, res, next) => {
-    if (req.user?.demo) return res.status(403).json({ error: 'Document uploads are unavailable in the demo account.' });
     if (!store.listDocuments) return res.status(503).json({ error: 'Document storage requires PostgreSQL. Start the database and restart the API.' });
     next();
   });

@@ -38,9 +38,6 @@ import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import DocumentLibrary, { ResearchSource } from '@/components/DocumentLibrary';
 import EvidenceCheck, { evidenceLabel } from '@/components/EvidenceCheck';
-import AuthScreen from './AuthScreen';
-
-const DEMO = "How can AI support a more effective research workflow?";
 const stepInfo = {
   plan: [
     "Research plan",
@@ -124,14 +121,6 @@ const date = (value) =>
 export default function App() {
   const health = useHealth();
   const navigate = useNavigate();
-  const [user, setUser] = useState(undefined);
-  useEffect(() => {
-    if (!health) return;
-    if (!health.authEnabled) { setUser({ username: 'Local user', demo: false }); return; }
-    let active = true;
-    api('/auth/me').then(data => { if (active) setUser(data.user); }).catch(() => { if (active) setUser(null); });
-    return () => { active = false; };
-  }, [health]);
   const [theme, setTheme] = useState(
     () => localStorage.getItem("research-theme") || "light",
   );
@@ -139,11 +128,7 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("research-theme", theme);
   }, [theme]);
-  if (!health || user === undefined) return <div className="auth-page">Connecting to your workspace…</div>;
-  if (!user) return <AuthScreen onLogin={setUser}/>;
-  async function logout() {
-    try { await api('/auth/logout', { method: 'POST' }); } finally { setUser(null); navigate('/login'); }
-  }
+  if (!health) return <div className="empty-state">Connecting to your workspace…</div>;
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -197,13 +182,6 @@ export default function App() {
             {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
             {theme === "light" ? "Dark appearance" : "Light appearance"}
           </button>
-          <div className="profile">
-            <span className="avatar">{user.username[0].toUpperCase()}</span>
-            <div>
-              {user.username}<small>{user.demo ? 'Shared demo workspace' : 'Personal workspace'}</small>
-            </div>
-            <span className="online-dot" />
-          </div>
         </div>
       </aside>
       <div className="main-shell">
@@ -223,16 +201,13 @@ export default function App() {
                 ? "API offline"
                 : health.liveConfigured
                   ? "Live research ready"
-                  : "Demo workspace"}
+                  : "Live research unavailable"}
           </Badge>
-          {health.authEnabled && <button className="topbar-logout" type="button" onClick={logout}>Log out</button>}</div>
+          </div>
         </header>
         <main>
           <Routes>
-            {['/login', '/register', '/verify', '/forgot-password', '/reset-password'].map(path =>
-              <Route key={path} path={path} element={<div className="page"><h1>You are signed in as {user.username}</h1><p>Log out to create or access another account.</p><Button onClick={logout}>Log out</Button></div>} />
-            )}
-            <Route path="/" element={<Dashboard health={health} user={user} />} />
+            <Route path="/" element={<Dashboard health={health} />} />
             <Route path="/research/:id" element={<Research />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route
@@ -258,10 +233,9 @@ export default function App() {
   );
 }
 
-function Dashboard({ health, user }) {
+function Dashboard({ health }) {
   const navigate = useNavigate();
   const [question, setQuestion] = useState("");
-  const [mode, setMode] = useState("demo");
   const [depth, setDepth] = useState("quick");
   const [documentIds, setDocumentIds] = useState([]);
   const [includeWeb, setIncludeWeb] = useState(true);
@@ -276,11 +250,10 @@ function Dashboard({ health, user }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          question: mode === "demo" ? DEMO : question,
-          mode,
+          question,
           depth,
-          documentIds: mode === 'live' ? documentIds : [],
-          includeWeb: mode === 'demo' ? true : includeWeb,
+          documentIds,
+          includeWeb,
         }),
       });
       navigate(`/research/${run.id}`);
@@ -362,28 +335,16 @@ function Dashboard({ health, user }) {
         </div>
         <textarea
           id="question"
-          aria-describedby="mode-help"
+          aria-describedby="research-help"
           placeholder="Ask a big question. Explore an idea. Compare perspectives…"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           maxLength={2000}
-          minLength={mode === "live" ? 10 : undefined}
-          required={mode === "live"}
+          minLength={10}
+          required
         />
         <div className="question-controls">
           <div className="controls-left">
-            <label className="select-wrap">
-              <Globe2 size={15} />
-              <select
-                aria-label="Research mode"
-                value={mode}
-                onChange={(e) => setMode(e.target.value)}
-              >
-                <option value="demo">Demo mode</option>
-                <option value="live" disabled={user.demo}>Live research</option>
-              </select>
-            </label>
-            <span className="control-divider" />
             <label className="select-wrap">
               <Layers3 size={15} />
               <select
@@ -402,7 +363,7 @@ function Dashboard({ health, user }) {
               busy ||
               !health ||
               health.offline ||
-              (mode === "live" && (includeWeb ? !health.liveConfigured : !health.documentsConfigured || !documentIds.length))
+              (includeWeb ? !health.liveConfigured : !health.documentsConfigured || !documentIds.length)
             }
           >
             {busy ? (
@@ -410,15 +371,14 @@ function Dashboard({ health, user }) {
             ) : (
               <Sparkles size={16} />
             )}{" "}
-            {mode === "demo" ? "Try sample research" : "Start research"}
+            Start research
             <ArrowRight size={16} />
           </Button>
         </div>
-        {mode === 'live' && <><div className="web-search-toggle"><label><input type="checkbox" checked={includeWeb} onChange={e => setIncludeWeb(e.target.checked)} disabled={busy}/> Include web search</label><span>{includeWeb ? 'Combine web sources with selected documents.' : 'Use only the selected documents. Select at least one ready file.'}</span></div><DocumentLibrary health={health} selected={documentIds} onSelect={setDocumentIds} disabled={busy}/></>}
-        <div id="mode-help" className="mode-help">
-          {mode === "demo" ? (
-            "Demo runs a fixed sample about AI research workflows. No API keys or live searches are used."
-          ) : (includeWeb ? health?.liveConfigured : health?.documentsConfigured) ? (
+        <div className="web-search-toggle"><label><input type="checkbox" checked={includeWeb} onChange={e => setIncludeWeb(e.target.checked)} disabled={busy}/> Include web search</label><span>{includeWeb ? 'Combine web sources with selected documents.' : 'Use only the selected documents. Select at least one ready file.'}</span></div>
+        <DocumentLibrary health={health} selected={documentIds} onSelect={setDocumentIds} disabled={busy}/>
+        <div id="research-help" className="mode-help">
+          {(includeWeb ? health?.liveConfigured : health?.documentsConfigured) ? (
             "Build a report from your chosen evidence. Provider API usage is billed to your configured accounts."
           ) : (
             <span>
@@ -565,7 +525,7 @@ function RecentResearch({ full = false }) {
                 <p>
                   {date(run.createdAt)}
                   <span>·</span>
-                  {run.mode === "demo" ? "Sample research" : (run.documentIds?.length ? (run.includeWeb ? "Web + documents" : "Document research") : "Web research")}
+                  {run.documentIds?.length ? (run.includeWeb ? "Web + documents" : "Document research") : "Web research"}
                   <span>·</span>
                   {run.sources.length} sources
                 </p>
@@ -684,7 +644,7 @@ function Research() {
       <div className="report-heading">
         <div>
           <div className="page-eyebrow">
-            {run.mode === "demo" ? "SAMPLE RESEARCH" : "RESEARCH WORKSPACE"}
+            RESEARCH WORKSPACE
           </div>
           <h1>{run.question}</h1>
           <div className="report-meta">
@@ -701,21 +661,12 @@ function Research() {
           <ArrowDownToLine size={16} /> Export .md
         </Button>
       </div>
-      {run.mode === "demo" && (
-        <div className="notice">
-          <Sparkles size={16} />
-          <span>
-            This is a fixed demo. No live search or factual verification was
-            performed.
-          </span>
-        </div>
-      )}
       {run.error && (
         <div role="alert" className="error-message">
           {run.error} <NavLink to="/">Start a new run</NavLink>
         </div>
       )}
-      {run.mode !== 'demo' && run.report && <div className="notice evidence-notice"><ShieldCheck size={17}/><span>{run.status === 'running' ? 'The draft is ready. Its final evidence check is still running.' : evidenceLabel(run.verification)}. This is a source-excerpt check, not independent fact verification.</span><button type="button" onClick={()=>setTab('evidence')}>View checks</button></div>}
+      {run.report && <div className="notice evidence-notice"><ShieldCheck size={17}/><span>{run.status === 'running' ? 'The draft is ready. Its final evidence check is still running.' : evidenceLabel(run.verification)}. This is a source-excerpt check, not independent fact verification.</span><button type="button" onClick={()=>setTab('evidence')}>View checks</button></div>}
       <div className="report-layout">
         <div>
           <div
@@ -787,7 +738,7 @@ function Research() {
                 </div>
               )
             ) : tab === 'evidence' ? (
-              run.status === 'running' && !run.verification ? <p className="muted">The evidence check will run after report writing finishes.</p> : <EvidenceCheck check={run.verification || (run.mode === 'demo' ? {scope:'Demo content is not fact-checked.'} : null)}/>
+              run.status === 'running' && !run.verification ? <p className="muted">The evidence check will run after report writing finishes.</p> : <EvidenceCheck check={run.verification}/>
             ) : (
               <div className="activity-content">
                 <h2>Behind the report</h2>
@@ -866,7 +817,7 @@ function Research() {
           </div>
           <div className="panel source-panel">
             <div className="panel-heading">
-              <h2>{run.mode === "demo" ? "Example references" : "Sources"}</h2>
+              <h2>Sources</h2>
               <Badge>{run.sources.length}</Badge>
             </div>
             {run.sources.length ? (

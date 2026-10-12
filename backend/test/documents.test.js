@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createApp } from '../src/app.js';
 import { memoryStore } from '../src/store.js';
-import { demoProvider, researchContext } from '../src/providers.js';
+import { researchContext } from '../src/providers.js';
 import { chunkPages, extractDocument, withDocumentRetrieval, MAX_FILE_BYTES } from '../src/documents.js';
 import { createResearchGraph, researchStages } from '../src/graph.js';
 import { vectorLiteral } from '../src/document-store.js';
@@ -11,6 +11,16 @@ import { vectorLiteral } from '../src/document-store.js';
 const content = 'Project Juniper uses a seven-day retention period. The pilot owner is Mira Chen. All exports require review.';
 const vector = () => [1, ...Array(1535).fill(0)];
 const embeddings = { embedDocuments: async texts => texts.map(vector), embedQuery: async () => vector() };
+function provider() {
+  return {
+    async plan() { return {plan:{queries:['research findings'],focus:['Sources']}}; },
+    async search() { return {sources:[{id:1,title:'Source one',url:'https://example.com/one',content:'Evidence one'},{id:2,title:'Source two',url:'https://example.com/two',content:'Evidence two'}]}; },
+    async analyze() { return {analysis:'Analysis'}; },
+    async review() { return {review:'Review'}; },
+    async write() { return {report:'Research report [1]',reportBody:'Research report [1]'}; },
+    async verify() { return {verification:{status:'checked'}}; },
+  };
+}
 function repository() {
   const docs = new Map(), chunks = new Map();
   return { ...memoryStore(), kind: 'postgresql',
@@ -25,7 +35,7 @@ function repository() {
 }
 async function serve(t, options = {}) {
   const store = repository();
-  const listener = createApp({ store, env: {OPENAI_API_KEY:'test-only'}, embeddings, providerFactory: () => demoProvider(0), ...options }).listen(0, '127.0.0.1');
+  const listener = createApp({ store, env: {OPENAI_API_KEY:'test-only'}, embeddings, providerFactory: provider, ...options }).listen(0, '127.0.0.1');
   await new Promise(resolve => listener.on('listening', resolve));
   t.after(() => new Promise(resolve => listener.close(resolve)));
   const origin = `http://127.0.0.1:${listener.address().port}`;
@@ -75,7 +85,7 @@ test('uploads, indexes, previews and deduplicates files; selected documents feed
   const preview=await fetch(origin+`/api/documents/${doc.id}/passages`).then(r=>r.json());
   assert.equal(preview.passages[0].content,content);
   const duplicate=await upload('same-notes.txt'); assert.equal(duplicate.status,200); assert.equal(duplicate.data.id,doc.id);
-  const response=await fetch(origin+'/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'What is the retention policy for Juniper?',mode:'live',includeWeb:false,documentIds:[doc.id]})});
+  const response=await fetch(origin+'/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'What is the retention policy for Juniper?',includeWeb:false,documentIds:[doc.id]})});
   assert.equal(response.status,202); const run=await response.json();
   const final=await waitFor(()=>store.get(run.id),r=>r.status!=='running');
   assert.equal(final.status,'complete'); assert.ok(!final.steps.some(s=>s.id==='search'));
@@ -90,13 +100,13 @@ test('upload and selection errors are explicit and provider secrets stay private
   const doc=await waitFor(()=>store.getDocument(created.data.id),d=>d.status!=='processing');
   assert.equal(doc.status,'failed'); assert.ok(!doc.error.includes('private-key'));
   for(const body of [{includeWeb:false,documentIds:[]},{includeWeb:false,documentIds:[doc.id]},{includeWeb:false,documentIds:[randomUUID()]},{includeWeb:false,documentIds:['invalid']}]) {
-    const response=await fetch(origin+'/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'What are the document findings?',mode:'live',...body})});
+    const response=await fetch(origin+'/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'What are the document findings?',...body})});
     assert.equal(response.status,400);
   }
 });
 test('mixed retrieval appends selected document evidence after web sources', async () => {
-  const id=randomUUID(); const provider=withDocumentRetrieval(demoProvider(0),{retrieveDocuments:async(ids)=>{assert.deepEqual(ids,[id]);return[{documentId:id,title:'Notes',content,page:2,chunkIndex:1}];}},embeddings);
-  const state=await createResearchGraph(provider,()=>{},researchStages({documentIds:[id]})).invoke({question:'What are the research findings?',documentIds:[id],includeWeb:true});
+  const id=randomUUID(); const researchProvider=withDocumentRetrieval(provider(),{retrieveDocuments:async(ids)=>{assert.deepEqual(ids,[id]);return[{documentId:id,title:'Notes',content,page:2,chunkIndex:1}];}},embeddings);
+  const state=await createResearchGraph(researchProvider,()=>{},researchStages({documentIds:[id]})).invoke({question:'What are the research findings?',documentIds:[id],includeWeb:true});
   assert.equal(state.sources.length,3);assert.equal(state.sources[2].id,3);assert.equal(state.sources[2].documentId,id);
   const context=researchContext(state);
   assert.ok(!JSON.stringify(context).includes(id));

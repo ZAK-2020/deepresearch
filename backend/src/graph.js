@@ -1,8 +1,8 @@
 import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
 
 export const stages = ["plan", "search", "analyze", "review", "write"];
-export function researchStages({ documentIds = [], includeWeb = true, mode = 'live' } = {}) {
-  return ['plan', ...(includeWeb ? ['search'] : []), ...(documentIds.length ? ['documents'] : []), 'analyze', 'review', 'write', ...(mode === 'live' ? ['verify'] : [])];
+export function researchStages({ documentIds = [], includeWeb = true } = {}) {
+  return ['plan', ...(includeWeb ? ['search'] : []), ...(documentIds.length ? ['documents'] : []), 'analyze', 'review', 'write', 'verify'];
 }
 const State = Annotation.Root({
   question: Annotation(),

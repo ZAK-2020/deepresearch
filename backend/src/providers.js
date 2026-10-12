@@ -2,8 +2,6 @@ import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
 import { assessmentSchema, verifyReport } from './verification.js';
 
-export const DEMO_QUESTION =
-  "How can AI support a more effective research workflow?";
 export function researchContext(state) {
   return {
     question: state.question, depth: state.depth, includeWeb: state.includeWeb,
@@ -140,65 +138,6 @@ export function liveProvider(env = process.env) {
         return {assessments};
       });
       return { verification };
-    },
-  };
-}
-
-export function demoProvider(delay = 700) {
-  const pause = () => new Promise((resolve) => setTimeout(resolve, delay));
-  return {
-    async verify() { return { verification: { status:'not_checked', scope:'Demo content is not fact-checked.' } }; },
-    async plan() {
-      await pause();
-      return {
-        plan: {
-          queries: ["AI-assisted research workflow"],
-          focus: [
-            "Plan a focused question",
-            "Collect traceable evidence",
-            "Review before publishing",
-          ],
-        },
-      };
-    },
-    async search() {
-      await pause();
-      return {
-        sources: [
-          {
-            id: 1,
-            title: "LangGraph overview",
-            url: "https://docs.langchain.com/oss/javascript/langgraph/overview",
-            content: "Illustrative reference only; not fetched in demo mode.",
-          },
-          {
-            id: 2,
-            title: "Tavily search documentation",
-            url: "https://docs.tavily.com/documentation/api-reference/endpoint/search",
-            content: "Illustrative reference only; not fetched in demo mode.",
-          },
-        ],
-      };
-    },
-    async analyze() {
-      await pause();
-      return {
-        analysis:
-          "Sample workflow: define the question, collect evidence, compare findings, and retain source references.",
-      };
-    },
-    async review() {
-      await pause();
-      return {
-        review:
-          "Demo only. No live search, AI analysis, or independent verification has been performed.",
-      };
-    },
-    async write() {
-      await pause();
-      return {
-        report: `# A more thoughtful research workflow\n\n> **Sample report — demo mode.** This is a fixed product walkthrough, not live research. The references below are illustrative reading links and were not fetched or verified.\n\n## Executive summary\nThis example shows how a research question moves through planning, discovery, analysis, evidence review, and report writing. The goal is to make the reasoning process visible and keep supporting material close to the final report.\n\n## Key findings\n### 1. Start with a focused question\nA useful plan breaks a broad topic into a few answerable questions. Define the scope, time period, and comparison criteria before collecting information.\n\n### 2. Keep evidence connected to findings\nA research workspace should preserve source links alongside the analysis so a reader can inspect the original context.\n\n### 3. Review uncertainty explicitly\nA convincing summary is not the same as a verified conclusion. Review conflicting evidence and identify what the available material cannot establish.\n\n## An example process\n| Step | Output |\n| --- | --- |\n| Plan | Focused research questions |\n| Search | Source excerpts and links |\n| Analyze | Findings and contrasting views |\n| Review | Evidence gaps and caveats |\n| Write | A report for human review |\n\n## Limitations\nThis demo makes no researched claims about the effectiveness of AI. Live mode uses search excerpts and a model-based evidence review; it does not guarantee factual accuracy.\n\n## Conclusion\nUse this workspace to explore a question, inspect evidence, and develop a report that you can review and refine.\n\n## Illustrative references\n1. https://docs.langchain.com/oss/javascript/langgraph/overview\n2. https://docs.tavily.com/documentation/api-reference/endpoint/search`,
-      };
     },
   };
 }

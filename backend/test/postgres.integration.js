@@ -4,7 +4,15 @@ import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { postgresStore } from '../src/store.js';
 import { createApp } from '../src/app.js';
-import { DEMO_QUESTION } from '../src/providers.js';
+const question = 'How can a team review research evidence?';
+const fakeProvider = () => ({
+  async plan() { return {plan:{queries:['research evidence'],focus:['Sources']}}; },
+  async search() { return {sources:[{id:1,title:'Example',url:'https://example.com',content:'Evidence'}]}; },
+  async analyze() { return {analysis:'Analysis'}; },
+  async review() { return {review:'Review'}; },
+  async write() { return {report:'Report [1]',reportBody:'Report [1]'}; },
+  async verify() { return {verification:{status:'checked'}}; },
+});
 
 test('PostgreSQL retains completed research across API restarts and recovers interrupted runs', { skip: !process.env.DATABASE_URL }, async () => {
   // Isolate this test in its own database, never deleting workspace research.
@@ -19,14 +27,14 @@ test('PostgreSQL retains completed research across API restarts and recovers int
   }
   async function start() {
     store = await postgresStore(url.href);
-    listener = createApp({ store: { ...store, auth: undefined }, env: {}, demoDelay: 0 }).listen(0, '127.0.0.1');
+    listener = createApp({ store, env: {OPENAI_API_KEY:'test',TAVILY_API_KEY:'test'}, providerFactory: fakeProvider }).listen(0, '127.0.0.1');
     await new Promise(resolve => listener.on('listening', resolve));
     return `http://127.0.0.1:${listener.address().port}`;
   }
   await admin.query(`CREATE DATABASE ${db}`);
   try {
     let origin = await start();
-    const created = await fetch(origin + '/api/research', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: DEMO_QUESTION, mode: 'demo' }) }).then(r => r.json());
+    const created = await fetch(origin + '/api/research', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) }).then(r => r.json());
     let complete;
     for (let i = 0; i < 100; i++) {
       complete = await store.get(created.id);
@@ -34,9 +42,20 @@ test('PostgreSQL retains completed research across API restarts and recovers int
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     assert.equal(complete.status, 'complete');
-    assert.equal(complete.sources.length, 2);
+    assert.equal(complete.sources.length, 1);
     complete.verification = {status:'needs_review',counts:{unsupported:1},claims:[{id:1,verdict:'unsupported',reason:'Persistence test evidence.'}]};
     await store.save(complete);
+    const privateId = randomUUID();
+    const privateDocumentId = randomUUID();
+    const privateOwnerId = randomUUID();
+    const dbClient = new pg.Pool({connectionString:url.href});
+    try {
+      await dbClient.query('INSERT INTO research_runs (id, created_at, data, user_id) VALUES ($1, now(), $2, $3)', [privateId, {...complete,id:privateId}, privateOwnerId]);
+      await dbClient.query('INSERT INTO documents (id, data, user_id) VALUES ($1, $2, $3)', [privateDocumentId, {id:privateDocumentId,name:'Private notes',status:'ready'}, privateOwnerId]);
+    } finally { await dbClient.end(); }
+    assert.equal(await store.get(privateId), undefined);
+    assert.equal(await store.getDocument(privateDocumentId), undefined);
+    assert.equal((await store.listDocuments()).some(doc => doc.id === privateDocumentId), false);
     const document = {id:randomUUID(),name:'Persistence notes.txt',status:'processing',embeddingModel:'text-embedding-3-small'};
     const other = {...document,id:randomUUID(),name:'Unselected notes.txt'};
     const vector = [1,...Array(1535).fill(0)];
@@ -68,6 +87,7 @@ test('PostgreSQL retains completed research across API restarts and recovers int
     assert.equal(failed.steps[1].status, 'failed');
     assert.match(failed.error, /restart/);
     assert.equal((await store.list()).length, 2);
+    assert.equal((await fetch(origin + '/api/research/' + privateId)).status, 404);
     assert.equal(await store.get("'; DROP TABLE research_runs;--"), undefined);
     assert.equal((await fetch(origin + '/api/health').then(r => r.json())).storage, 'postgresql');
   } finally {
